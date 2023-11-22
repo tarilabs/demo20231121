@@ -1,0 +1,72 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: my-pipeline
+  annotations:
+    tekton.dev/output_artifacts: '{}'
+    tekton.dev/input_artifacts: '{}'
+    tekton.dev/artifact_bucket: mlpipeline
+    tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
+    tekton.dev/artifact_endpoint_scheme: http://
+    tekton.dev/artifact_items: '{"os-environ-print": []}'
+    sidecar.istio.io/inject: "false"
+    tekton.dev/template: ''
+    pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
+    pipelines.kubeflow.org/pipeline_spec: '{"inputs": [{"name": "my_input"}], "name":
+      "My pipeline"}'
+  labels:
+    pipelines.kubeflow.org/pipelinename: ''
+    pipelines.kubeflow.org/generation: ''
+spec:
+  params:
+  - name: my_input
+    value: ''
+  pipelineSpec:
+    params:
+    - name: my_input
+    tasks:
+    - name: os-environ-print
+      params:
+      - name: my_input
+        value: $(params.my_input)
+      - name: pipelineRun-uid
+        value: $(context.pipelineRun.uid)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --my-input
+          - $(inputs.params.my_input)
+          - --input2
+          - $(params.pipelineRun-uid)
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def os_environ_print(my_input, input2):
+                print('my_input: ', my_input)
+                print('input2: ', input2)
+                import os
+                print(os.environ)
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Os environ print', description='')
+            _parser.add_argument("--my-input", dest="my_input", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--input2", dest="input2", type=str, required=True, default=argparse.SUPPRESS)
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = os_environ_print(**_parsed_args)
+          image: ubi8/python-39
+        params:
+        - name: my_input
+        - name: pipelineRun-uid
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Os environ print",
+              "outputs": [], "version": "Os environ print@sha256=d6b113379ea35cda25c1ab58dd216298bc1dc4a10935d45f04722506d21bf52f"}'
