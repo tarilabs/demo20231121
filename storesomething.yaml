@@ -1,0 +1,96 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: my-pipeline
+  annotations:
+    tekton.dev/output_artifacts: '{"os-environ-print": [{"key": "artifacts/$PIPELINERUN/os-environ-print/model.tgz",
+      "name": "os-environ-print-model", "path": "/tmp/outputs/model/data"}]}'
+    tekton.dev/input_artifacts: '{}'
+    tekton.dev/artifact_bucket: mlpipeline
+    tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
+    tekton.dev/artifact_endpoint_scheme: http://
+    tekton.dev/artifact_items: '{"os-environ-print": [["model", "$(results.model.path)"]]}'
+    sidecar.istio.io/inject: "false"
+    tekton.dev/template: ''
+    pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
+    pipelines.kubeflow.org/pipeline_spec: '{"inputs": [{"name": "my_input"}], "name":
+      "My pipeline"}'
+  labels:
+    pipelines.kubeflow.org/pipelinename: ''
+    pipelines.kubeflow.org/generation: ''
+spec:
+  params:
+  - name: my_input
+    value: ''
+  pipelineSpec:
+    params:
+    - name: my_input
+    tasks:
+    - name: os-environ-print
+      params:
+      - name: my_input
+        value: $(params.my_input)
+      - name: pipelineRun-uid
+        value: $(context.pipelineRun.uid)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --my-input
+          - $(inputs.params.my_input)
+          - --input2
+          - $(params.pipelineRun-uid)
+          - --model
+          - $(results.model.path)
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def _make_parent_dirs_and_return_path(file_path: str):
+                import os
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                return file_path
+
+            def os_environ_print(my_input, input2, model_file,):
+                import os
+                import pickle
+                import json
+                model = dict()
+                model['my_input'] = my_input
+                model['input2'] = input2
+                model['osenviron'] = json.dumps(dict(os.environ))
+                print(model)
+                print(model_file)
+
+                def save_pickle(object_file, target_object):
+                    with open(object_file, "w") as f:
+                        json.dump(target_object, f)
+
+                save_pickle(model_file, model)
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Os environ print', description='')
+            _parser.add_argument("--my-input", dest="my_input", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--input2", dest="input2", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--model", dest="model_file", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = os_environ_print(**_parsed_args)
+          image: ubi8/python-39
+        params:
+        - name: my_input
+        - name: pipelineRun-uid
+        results:
+        - name: model
+          type: string
+          description: /tmp/outputs/model/data
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Os environ print",
+              "outputs": [{"name": "model"}], "version": "Os environ print@sha256=80e25d4341bc328aaabedb863df31a80ea26db157720ccba88011a31b53c5d4a"}'
