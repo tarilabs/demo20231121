@@ -1,0 +1,248 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: test-data-passing-pipeline-1
+  annotations:
+    tekton.dev/output_artifacts: '{"receive-file": [{"key": "artifacts/$PIPELINERUN/receive-file/saveartifact.tgz",
+      "name": "receive-file-saveartifact", "path": "/tmp/outputs/saveartifact/data"}],
+      "send-file": [{"key": "artifacts/$PIPELINERUN/send-file/outgoingfile.tgz", "name":
+      "send-file-outgoingfile", "path": "/tmp/outputs/outgoingfile/data"}]}'
+    tekton.dev/input_artifacts: '{"receive-file": [{"name": "send-file-outgoingfile",
+      "parent_task": "send-file"}]}'
+    tekton.dev/artifact_bucket: mlpipeline
+    tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
+    tekton.dev/artifact_endpoint_scheme: http://
+    tekton.dev/artifact_items: '{"receive-file": [["saveartifact", "$(workspaces.receive-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact"]],
+      "send-file": [["outgoingfile", "$(workspaces.send-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile"]]}'
+    sidecar.istio.io/inject: "false"
+    tekton.dev/template: ''
+    pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
+    pipelines.kubeflow.org/pipeline_spec: '{"name": "Test Data Passing Pipeline 1"}'
+  labels:
+    pipelines.kubeflow.org/pipelinename: ''
+    pipelines.kubeflow.org/generation: ''
+spec:
+  pipelineSpec:
+    tasks:
+    - name: send-file
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --outgoingfile
+          - $(workspaces.send-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def _make_parent_dirs_and_return_path(file_path: str):
+                import os
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                return file_path
+
+            def send_file(
+                outgoingfile,
+            ):
+                import urllib.request
+
+                print("starting download...")
+                urllib.request.urlretrieve("http://212.183.159.230/20MB.zip", outgoingfile)
+                print("done")
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Send file', description='')
+            _parser.add_argument("--outgoingfile", dest="outgoingfile", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = send_file(**_parsed_args)
+          image: registry.access.redhat.com/ubi8/python-38
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: busybox
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: busybox
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.send-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile $(results.outgoingfile.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        results:
+        - name: outgoingfile
+          type: string
+          description: /tmp/outputs/outgoingfile/data
+        - name: taskrun-name
+          type: string
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Send file", "outputs":
+              [{"name": "outgoingfile"}], "version": "Send file@sha256=78a450cc17155119daf37087cfc36ff46196282f05d791341808b64ce02fc8b3"}'
+        workspaces:
+        - name: send-file
+      workspaces:
+      - name: send-file
+        workspace: test-data-passing-pipeline-1
+    - name: receive-file
+      params:
+      - name: send-file-trname
+        value: $(tasks.send-file.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --incomingfile
+          - $(workspaces.receive-file.path)/artifacts/$ORIG_PR_NAME/$(params.send-file-trname)/outgoingfile
+          - --saveartifact
+          - $(workspaces.receive-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def _make_parent_dirs_and_return_path(file_path: str):
+                import os
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                return file_path
+
+            def receive_file(
+                incomingfile,
+                saveartifact,
+            ):
+                import os
+                import shutil
+
+                print("reading %s, size is %s" % (incomingfile, os.path.getsize(incomingfile)))
+
+                with open(incomingfile, "rb") as f:
+                    b = f.read(1)
+                    print("read byte: %s" % b)
+                    f.close()
+
+                print("copying in %s to out %s" % (incomingfile, saveartifact))
+                shutil.copyfile(incomingfile, saveartifact)
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Receive file', description='')
+            _parser.add_argument("--incomingfile", dest="incomingfile", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--saveartifact", dest="saveartifact", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = receive_file(**_parsed_args)
+          image: registry.access.redhat.com/ubi8/python-38
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: busybox
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: busybox
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.receive-file.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact $(results.saveartifact.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        params:
+        - name: send-file-trname
+        results:
+        - name: saveartifact
+          type: string
+          description: /tmp/outputs/saveartifact/data
+        - name: taskrun-name
+          type: string
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            artifact_outputs: '["saveartifact"]'
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Receive file",
+              "outputs": [{"name": "saveartifact", "type": "saveartifact"}], "version":
+              "Receive file@sha256=eb0eeb7260679fcc58d690b18735adedcd85be5e2ab301c78582d0db0191a4c6"}'
+        workspaces:
+        - name: receive-file
+      workspaces:
+      - name: receive-file
+        workspace: test-data-passing-pipeline-1
+      runAfter:
+      - send-file
+    workspaces:
+    - name: test-data-passing-pipeline-1
+  workspaces:
+  - name: test-data-passing-pipeline-1
+    volumeClaimTemplate:
+      spec:
+        storageClassName: kfp-csi-s3
+        accessModes:
+        - ReadWriteMany
+        resources:
+          requests:
+            storage: 2Gi

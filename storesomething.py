@@ -1,7 +1,7 @@
 import kfp
 from kfp_tekton.compiler import TektonCompiler
 
-def os_environ_print(my_input, input2, model_file: kfp.components.OutputPath(),):
+def os_environ_print(my_input, input2, model_file: kfp.components.OutputPath("model_file"),):
     import os
     import pickle
     import json
@@ -23,9 +23,15 @@ create_step_os_environ_print = kfp.components.create_component_from_func(
     base_image='ubi8/python-39',
     packages_to_install=[])
 
-
+@kfp.dsl.pipeline(
+    name="Test Matteo storesomething",
+)
 def my_pipeline(my_input):
-  task1 = create_step_os_environ_print(my_input=my_input, input2=kfp.dsl.RUN_ID_PLACEHOLDER)
+  import json
+  task1 = create_step_os_environ_print(
+      my_input=my_input, 
+      input2=kfp.dsl.RUN_ID_PLACEHOLDER
+    ).add_pod_annotation(name='artifact_outputs', value=json.dumps(['model_file']))
 
 
 if __name__ == "__main__":
