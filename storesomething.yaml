@@ -3,14 +3,18 @@ kind: PipelineRun
 metadata:
   name: test-matteo-storesomething
   annotations:
-    tekton.dev/output_artifacts: '{"os-environ-print": [{"key": "artifacts/$PIPELINERUN/os-environ-print/model.tgz",
-      "name": "os-environ-print-model", "path": "/tmp/outputs/model/data"}]}'
-    tekton.dev/input_artifacts: '{}'
+    tekton.dev/output_artifacts: '{"step1": [{"key": "artifacts/$PIPELINERUN/step1/outgoingfile.tgz",
+      "name": "step1-outgoingfile", "path": "/tmp/outputs/outgoingfile/data"}], "step2":
+      [{"key": "artifacts/$PIPELINERUN/step2/saveartifact.tgz", "name": "step2-saveartifact",
+      "path": "/tmp/outputs/saveartifact/data"}]}'
+    tekton.dev/input_artifacts: '{"step2": [{"name": "step1-outgoingfile", "parent_task":
+      "step1"}]}'
     tekton.dev/artifact_bucket: mlpipeline
     tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
     tekton.dev/artifact_endpoint_scheme: http://
-    tekton.dev/artifact_items: '{"logg-env-function": [], "os-environ-print": [["model",
-      "$(results.model.path)"]]}'
+    tekton.dev/artifact_items: '{"logg-env-function": [], "step1": [["outgoingfile",
+      "$(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile"]],
+      "step2": [["saveartifact", "$(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact"]]}'
     sidecar.istio.io/inject: "false"
     tekton.dev/template: ''
     pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
@@ -57,14 +61,14 @@ spec:
               secretKeyRef:
                 name: aws-connection-mybucket
                 key: AWS_SECRET_ACCESS_KEY
-          image: ubi8/python-39
+          image: registry.access.redhat.com/ubi8/python-39
         metadata:
           labels:
             pipelines.kubeflow.org/cache_enabled: "true"
           annotations:
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Logg env function",
-              "outputs": [], "version": "Logg env function@sha256=2eb1f7435ad1758ad399c289eae48abebbb73f2a637837078149f5f0a9aba483"}'
-    - name: os-environ-print
+              "outputs": [], "version": "Logg env function@sha256=5805404fb4eacfffc911742202dbad8bfb601f7d6ab4310233474e2583c30537"}'
+    - name: step1
       params:
       - name: my_input
         value: $(params.my_input)
@@ -78,8 +82,8 @@ spec:
           - $(inputs.params.my_input)
           - --input2
           - $(params.pipelineRun-uid)
-          - --model
-          - $(results.model.path)
+          - --outgoingfile
+          - $(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile
           command:
           - sh
           - -ec
@@ -93,7 +97,7 @@ spec:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 return file_path
 
-            def os_environ_print(my_input, input2, model_file,):
+            def step1(my_input, input2, outgoingfile):
                 import os
                 import pickle
                 import json
@@ -102,7 +106,7 @@ spec:
                 model['input2'] = input2
                 model['osenviron'] = json.dumps(dict(os.environ))
                 print(model)
-                print(model_file)
+                print(outgoingfile)
 
                 from tensorflow import keras
                 (X_train,y_train),(X_test,y_test) = keras.datasets.mnist.load_data()
@@ -115,29 +119,195 @@ spec:
                     with open(object_file, "w") as f:
                         json.dump(target_object, f)
 
-                save_pickle(model_file, model)
+                save_pickle(outgoingfile, model)
 
             import argparse
-            _parser = argparse.ArgumentParser(prog='Os environ print', description='')
+            _parser = argparse.ArgumentParser(prog='Step1', description='')
             _parser.add_argument("--my-input", dest="my_input", type=str, required=True, default=argparse.SUPPRESS)
             _parser.add_argument("--input2", dest="input2", type=str, required=True, default=argparse.SUPPRESS)
-            _parser.add_argument("--model", dest="model_file", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--outgoingfile", dest="outgoingfile", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
             _parsed_args = vars(_parser.parse_args())
 
-            _outputs = os_environ_print(**_parsed_args)
+            _outputs = step1(**_parsed_args)
           image: quay.io/mmortari/rdsp:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: registry.access.redhat.com/ubi8/python-38
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: registry.access.redhat.com/ubi8/python-38
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile $(results.outgoingfile.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
         params:
         - name: my_input
         - name: pipelineRun-uid
         results:
-        - name: model
+        - name: outgoingfile
           type: string
-          description: /tmp/outputs/model/data
+          description: /tmp/outputs/outgoingfile/data
+        - name: taskrun-name
+          type: string
         metadata:
           labels:
             pipelines.kubeflow.org/cache_enabled: "true"
           annotations:
             artifact_outputs: '["model_file"]'
-            pipelines.kubeflow.org/component_spec_digest: '{"name": "Os environ print",
-              "outputs": [{"name": "model", "type": "model_file"}], "version": "Os
-              environ print@sha256=f658ea77394a6d275d3f69a2eb478c9d6415d80ef01f22c1e98d191e67d52259"}'
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Step1", "outputs":
+              [{"name": "outgoingfile", "type": "model_file"}], "version": "Step1@sha256=75b5841a8b006c40b2208ecc4425bd5e485245c30a2bdd58f33c47e97df814e9"}'
+        workspaces:
+        - name: step1
+      workspaces:
+      - name: step1
+        workspace: test-matteo-storesomething
+    - name: step2
+      params:
+      - name: step1-trname
+        value: $(tasks.step1.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --incomingfile
+          - $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(params.step1-trname)/outgoingfile
+          - --saveartifact
+          - $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def _make_parent_dirs_and_return_path(file_path: str):
+                import os
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                return file_path
+
+            def step2(incomingfile, saveartifact):
+                import shutil
+                print(f'incomingfile: {incomingfile}')
+                with open(incomingfile, 'r') as reader:
+                    for line in reader:
+                        print(line)
+                shutil.copyfile(incomingfile, saveartifact)
+                print('end.')
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Step2', description='')
+            _parser.add_argument("--incomingfile", dest="incomingfile", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--saveartifact", dest="saveartifact", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = step2(**_parsed_args)
+          image: quay.io/mmortari/rdsp:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: registry.access.redhat.com/ubi8/python-38
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: registry.access.redhat.com/ubi8/python-38
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact $(results.saveartifact.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        params:
+        - name: step1-trname
+        results:
+        - name: saveartifact
+          type: string
+          description: /tmp/outputs/saveartifact/data
+        - name: taskrun-name
+          type: string
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            artifact_outputs: '["saveartifact"]'
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Step2", "outputs":
+              [{"name": "saveartifact", "type": "saveartifact"}], "version": "Step2@sha256=72d19ba2010d12705983616126517ecd511691ca1486724a77c7de4e7f2b9df3"}'
+        workspaces:
+        - name: step2
+      workspaces:
+      - name: step2
+        workspace: test-matteo-storesomething
+      runAfter:
+      - step1
+    workspaces:
+    - name: test-matteo-storesomething
+  workspaces:
+  - name: test-matteo-storesomething
+    volumeClaimTemplate:
+      spec:
+        storageClassName: standard-csi
+        accessModes:
+        - ReadWriteMany
+        resources:
+          requests:
+            storage: 2Gi
