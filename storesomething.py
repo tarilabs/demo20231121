@@ -1,5 +1,5 @@
 import kfp
-from kfp_tekton.compiler import TektonCompiler
+from kfp_tekton.compiler import TektonCompiler, 
 from kubernetes.client.models import V1EnvVar
 import json
 
@@ -60,6 +60,9 @@ def my_pipeline(my_input):
 
 
 if __name__ == "__main__":
-    TektonCompiler().compile(
+    compiler = TektonCompiler()
+    compiler.bash_image_name = 'ubi8/python-39'
+    compiler.condition_image_name = 'ubi8/python-39'
+    compiler.compile(
         my_pipeline, __file__.replace(".py", ".yaml")
     )

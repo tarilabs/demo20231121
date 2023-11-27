@@ -1,6 +1,7 @@
 """Test pipeline to exercise various data flow mechanisms."""
 import kfp
 from kfp_tekton.compiler import TektonCompiler
+from kfp_tekton.compiler.pipeline_utils import TektonPipelineConf
 
 """Producer"""
 def send_file(
@@ -57,7 +58,13 @@ def wire_up_pipeline():
         send_file_task.output,
     ).add_pod_annotation(name='artifact_outputs', value=json.dumps(['saveartifact']))
 
+
 if __name__ == "__main__":
+    conf = TektonPipelineConf()
+    conf.bash_image_name = 'ubi8/python-39'
+    conf.condition_image_name = 'ubi8/python-39'
     TektonCompiler().compile(
-        wire_up_pipeline, __file__.replace(".py", ".yaml")
+        pipeline_func=wire_up_pipeline,
+        package_path=__file__.replace(".py", ".yaml"),
+        tekton_pipeline_conf=conf
     )
