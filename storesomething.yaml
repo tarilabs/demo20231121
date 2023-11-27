@@ -3,18 +3,24 @@ kind: PipelineRun
 metadata:
   name: test-matteo-storesomething
   annotations:
-    tekton.dev/output_artifacts: '{"step1": [{"key": "artifacts/$PIPELINERUN/step1/outgoingfile.tgz",
-      "name": "step1-outgoingfile", "path": "/tmp/outputs/outgoingfile/data"}], "step2":
-      [{"key": "artifacts/$PIPELINERUN/step2/saveartifact.tgz", "name": "step2-saveartifact",
-      "path": "/tmp/outputs/saveartifact/data"}]}'
-    tekton.dev/input_artifacts: '{"step2": [{"name": "step1-outgoingfile", "parent_task":
-      "step1"}]}'
+    tekton.dev/output_artifacts: '{"index-on-modelregistry": [{"key": "artifacts/$PIPELINERUN/index-on-modelregistry/saveartifact.tgz",
+      "name": "index-on-modelregistry-saveartifact", "path": "/tmp/outputs/saveartifact/data"}],
+      "train-model": [{"key": "artifacts/$PIPELINERUN/train-model/outgoingfile.tgz",
+      "name": "train-model-outgoingfile", "path": "/tmp/outputs/outgoingfile/data"},
+      {"key": "artifacts/$PIPELINERUN/train-model/outgoingfile2.tgz", "name": "train-model-outgoingfile2",
+      "path": "/tmp/outputs/outgoingfile2/data"}], "validate-model": [{"key": "artifacts/$PIPELINERUN/validate-model/Output.tgz",
+      "name": "validate-model-Output", "path": "/tmp/outputs/Output/data"}]}'
+    tekton.dev/input_artifacts: '{"index-on-modelregistry": [{"name": "train-model-outgoingfile2",
+      "parent_task": "train-model"}], "validate-model": [{"name": "train-model-outgoingfile",
+      "parent_task": "train-model"}]}'
     tekton.dev/artifact_bucket: mlpipeline
     tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
     tekton.dev/artifact_endpoint_scheme: http://
-    tekton.dev/artifact_items: '{"logg-env-function": [], "step1": [["outgoingfile",
-      "$(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile"]],
-      "step2": [["saveartifact", "$(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact"]]}'
+    tekton.dev/artifact_items: '{"index-on-modelregistry": [["saveartifact", "$(workspaces.index-on-modelregistry.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact"]],
+      "logg-env-function": [], "train-model": [["outgoingfile", "$(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile"],
+      ["outgoingfile2", "$(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile2"]],
+      "validate-model": [["Output", "$(results.Output.path)"]], "when-not-validated":
+      []}'
     sidecar.istio.io/inject: "false"
     tekton.dev/template: ''
     pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
@@ -68,7 +74,7 @@ spec:
           annotations:
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Logg env function",
               "outputs": [], "version": "Logg env function@sha256=5805404fb4eacfffc911742202dbad8bfb601f7d6ab4310233474e2583c30537"}'
-    - name: step1
+    - name: train-model
       params:
       - name: my_input
         value: $(params.my_input)
@@ -83,7 +89,9 @@ spec:
           - --input2
           - $(params.pipelineRun-uid)
           - --outgoingfile
-          - $(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile
+          - $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile
+          - --outgoingfile2
+          - $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile2
           command:
           - sh
           - -ec
@@ -97,8 +105,9 @@ spec:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 return file_path
 
-            def step1(my_input, input2, outgoingfile):
+            def train_model(my_input, input2, outgoingfile, outgoingfile2):
                 import os
+                import shutil
                 import pickle
                 import json
                 model = dict()
@@ -108,28 +117,50 @@ spec:
                 print(model)
                 print(outgoingfile)
 
+                import tensorflow as tf
                 from tensorflow import keras
+                from tensorflow.keras import Sequential
                 (X_train,y_train),(X_test,y_test) = keras.datasets.mnist.load_data()
 
                 X_train = X_train/255
                 X_test = X_test/255
                 print('y_train[7] is the label:', y_train[7])
 
-                def save_pickle(object_file, target_object):
-                    with open(object_file, "w") as f:
-                        json.dump(target_object, f)
+                model = Sequential()
+                model.add(tf.keras.layers.Conv2D(filters=32, kernel_size=(3, 3), input_shape=(28, 28, 1)))
+                model.add(tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2))
+                model.add(tf.keras.layers.Flatten())
+                model.add(tf.keras.layers.Dense(units=64, activation=tf.nn.relu))
+                model.add(tf.keras.layers.Dropout(rate=0.2))
+                model.add(tf.keras.layers.Dense(10, activation=tf.nn.softmax))
+                model.compile(optimizer='adam',
+                            loss='sparse_categorical_crossentropy',
+                            metrics=['accuracy'])
+                print(model.summary())
+                history = model.fit(X_train,y_train,epochs=2) # TODO increase to 3
+                import tf2onnx
+                import onnx
+                input_signature = [tf.TensorSpec([1, 28, 28], tf.double, name='x')]
+                onnx_model, _ = tf2onnx.convert.from_keras(model, input_signature, opset=12)
+                onnx.save(onnx_model, "model2.onnx")
+
+                def save_pickle(object_file, model):
+                    with open(object_file, "wb") as f:
+                        pickle.dump(model, f)
 
                 save_pickle(outgoingfile, model)
+                shutil.copyfile('model2.onnx', outgoingfile2)
 
             import argparse
-            _parser = argparse.ArgumentParser(prog='Step1', description='')
+            _parser = argparse.ArgumentParser(prog='Train model', description='')
             _parser.add_argument("--my-input", dest="my_input", type=str, required=True, default=argparse.SUPPRESS)
             _parser.add_argument("--input2", dest="input2", type=str, required=True, default=argparse.SUPPRESS)
             _parser.add_argument("--outgoingfile", dest="outgoingfile", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("--outgoingfile2", dest="outgoingfile2", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
             _parsed_args = vars(_parser.parse_args())
 
-            _outputs = step1(**_parsed_args)
-          image: quay.io/mmortari/rdsp:latest
+            _outputs = train_model(**_parsed_args)
+          image: image-registry.openshift-image-registry.svc:5000/odh/jupyter-tensorflow-notebook:2023.1
           env:
           - name: ORIG_PR_NAME
             valueFrom:
@@ -165,7 +196,8 @@ spec:
               fi
             fi
             }
-            copy_artifact $(workspaces.step1.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile $(results.outgoingfile.path)
+            copy_artifact $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile $(results.outgoingfile.path)
+            copy_artifact $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/outgoingfile2 $(results.outgoingfile2.path)
           onError: continue
           env:
           - name: ORIG_PR_NAME
@@ -179,32 +211,118 @@ spec:
         - name: outgoingfile
           type: string
           description: /tmp/outputs/outgoingfile/data
+        - name: outgoingfile2
+          type: string
+          description: /tmp/outputs/outgoingfile2/data
         - name: taskrun-name
           type: string
         metadata:
           labels:
             pipelines.kubeflow.org/cache_enabled: "true"
           annotations:
-            artifact_outputs: '["model_file"]'
-            pipelines.kubeflow.org/component_spec_digest: '{"name": "Step1", "outputs":
-              [{"name": "outgoingfile", "type": "model_file"}], "version": "Step1@sha256=75b5841a8b006c40b2208ecc4425bd5e485245c30a2bdd58f33c47e97df814e9"}'
+            artifact_outputs: '["model_file", "onnx_file"]'
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Train model",
+              "outputs": [{"name": "outgoingfile", "type": "model_file"}, {"name":
+              "outgoingfile2", "type": "onnx_file"}], "version": "Train model@sha256=eccf3efbb6ea383ebad47586b3e84062758b0e8363ac803545e5ae560062df15"}'
         workspaces:
-        - name: step1
+        - name: train-model
       workspaces:
-      - name: step1
+      - name: train-model
         workspace: test-matteo-storesomething
-    - name: step2
+    - name: validate-model
       params:
-      - name: step1-trname
-        value: $(tasks.step1.results.taskrun-name)
+      - name: train-model-trname
+        value: $(tasks.train-model.results.taskrun-name)
       taskSpec:
         steps:
         - name: main
           args:
           - --incomingfile
-          - $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(params.step1-trname)/outgoingfile
+          - $(workspaces.validate-model.path)/artifacts/$ORIG_PR_NAME/$(params.train-model-trname)/outgoingfile
+          - '----output-paths'
+          - $(results.Output.path)
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def validate_model(incomingfile):
+                # For demo purposes, always validate.
+                return True
+
+            def _serialize_bool(bool_value: bool) -> str:
+                if isinstance(bool_value, str):
+                    return bool_value
+                if not isinstance(bool_value, bool):
+                    raise TypeError('Value "{}" has type "{}" instead of bool.'.format(
+                        str(bool_value), str(type(bool_value))))
+                return str(bool_value)
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Validate model', description='')
+            _parser.add_argument("--incomingfile", dest="incomingfile", type=str, required=True, default=argparse.SUPPRESS)
+            _parser.add_argument("----output-paths", dest="_output_paths", type=str, nargs=1)
+            _parsed_args = vars(_parser.parse_args())
+            _output_files = _parsed_args.pop("_output_paths", [])
+
+            _outputs = validate_model(**_parsed_args)
+
+            _outputs = [_outputs]
+
+            _output_serializers = [
+                _serialize_bool,
+
+            ]
+
+            import os
+            for idx, output_file in enumerate(_output_files):
+                try:
+                    os.makedirs(os.path.dirname(output_file))
+                except OSError:
+                    pass
+                with open(output_file, 'w') as f:
+                    f.write(_output_serializers[idx](_outputs[idx]))
+          image: image-registry.openshift-image-registry.svc:5000/odh/jupyter-tensorflow-notebook:2023.1
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        params:
+        - name: train-model-trname
+        results:
+        - name: Output
+          type: string
+          description: /tmp/outputs/Output/data
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Validate model",
+              "outputs": [{"name": "Output", "type": "Boolean"}], "version": "Validate
+              model@sha256=7fc28d45922ffef1f0b8f455c6471712179ef33c5c7bf435f80ecb4572cd2528"}'
+        workspaces:
+        - name: validate-model
+      workspaces:
+      - name: validate-model
+        workspace: test-matteo-storesomething
+      runAfter:
+      - train-model
+    - name: index-on-modelregistry
+      params:
+      - name: train-model-trname
+        value: $(tasks.train-model.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --incomingfile
+          - $(workspaces.index-on-modelregistry.path)/artifacts/$ORIG_PR_NAME/$(params.train-model-trname)/outgoingfile2
           - --saveartifact
-          - $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact
+          - $(workspaces.index-on-modelregistry.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact
           command:
           - sh
           - -ec
@@ -218,22 +336,22 @@ spec:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 return file_path
 
-            def step2(incomingfile, saveartifact):
-                import shutil
+            def index_on_ModelRegistry(incomingfile, saveartifact):
+                import onnx
                 print(f'incomingfile: {incomingfile}')
-                with open(incomingfile, 'r') as reader:
-                    for line in reader:
-                        print(line)
-                shutil.copyfile(incomingfile, saveartifact)
+                onnx_model = onnx.load(incomingfile)
+                onnx.checker.check_model(onnx_model)
+
+                print(onnx_model)
                 print('end.')
 
             import argparse
-            _parser = argparse.ArgumentParser(prog='Step2', description='')
+            _parser = argparse.ArgumentParser(prog='Index on ModelRegistry', description='')
             _parser.add_argument("--incomingfile", dest="incomingfile", type=str, required=True, default=argparse.SUPPRESS)
             _parser.add_argument("--saveartifact", dest="saveartifact", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
             _parsed_args = vars(_parser.parse_args())
 
-            _outputs = step2(**_parsed_args)
+            _outputs = index_on_ModelRegistry(**_parsed_args)
           image: quay.io/mmortari/rdsp:latest
           env:
           - name: ORIG_PR_NAME
@@ -270,7 +388,7 @@ spec:
               fi
             fi
             }
-            copy_artifact $(workspaces.step2.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact $(results.saveartifact.path)
+            copy_artifact $(workspaces.index-on-modelregistry.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/saveartifact $(results.saveartifact.path)
           onError: continue
           env:
           - name: ORIG_PR_NAME
@@ -278,7 +396,7 @@ spec:
               fieldRef:
                 fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
         params:
-        - name: step1-trname
+        - name: train-model-trname
         results:
         - name: saveartifact
           type: string
@@ -290,15 +408,135 @@ spec:
             pipelines.kubeflow.org/cache_enabled: "true"
           annotations:
             artifact_outputs: '["saveartifact"]'
-            pipelines.kubeflow.org/component_spec_digest: '{"name": "Step2", "outputs":
-              [{"name": "saveartifact", "type": "saveartifact"}], "version": "Step2@sha256=72d19ba2010d12705983616126517ecd511691ca1486724a77c7de4e7f2b9df3"}'
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Index on ModelRegistry",
+              "outputs": [{"name": "saveartifact", "type": "saveartifact"}], "version":
+              "Index on ModelRegistry@sha256=9b904391050b9d9e213b65d0a17d9e5cadcd99b5e0f73aadb5cb52b6574fbb8c"}'
         workspaces:
-        - name: step2
+        - name: index-on-modelregistry
+      when:
+      - input: $(tasks.condition-1.results.outcome)
+        operator: in
+        values:
+        - "true"
       workspaces:
-      - name: step2
+      - name: index-on-modelregistry
         workspace: test-matteo-storesomething
       runAfter:
-      - step1
+      - train-model
+    - name: when-not-validated
+      taskSpec:
+        steps:
+        - name: main
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def when_not_validated():
+                print("The model built by CI failed to match required Validation, hence won't be registered in Model Registry")
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='When not validated', description='')
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = when_not_validated(**_parsed_args)
+          image: registry.access.redhat.com/ubi8/python-39
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "When not validated",
+              "outputs": [], "version": "When not validated@sha256=d5467e85d71ddce3cbf508bf9c725e6e194b29bc8061a4faec4713edb2064750"}'
+      when:
+      - input: $(tasks.condition-2.results.outcome)
+        operator: in
+        values:
+        - "true"
+    - name: condition-1
+      params:
+      - name: operand1
+        value: $(tasks.validate-model.results.Output)
+      - name: operand2
+        value: "True"
+      - name: operator
+        value: ==
+      taskSpec:
+        results:
+        - name: outcome
+          type: string
+          description: Conditional task outcome
+        params:
+        - name: operand1
+        - name: operand2
+        - name: operator
+        steps:
+        - name: main
+          command:
+          - sh
+          - -ec
+          - program_path=$(mktemp); printf "%s" "$0" > "$program_path";  python3 -u
+            "$program_path" "$1" "$2"
+          args:
+          - |
+            import sys
+            input1=str.rstrip(sys.argv[1])
+            input2=str.rstrip(sys.argv[2])
+            try:
+              input1=int(input1)
+              input2=int(input2)
+            except:
+              input1=str(input1)
+            outcome="true" if (input1 $(inputs.params.operator) input2) else "false"
+            f = open("/tekton/results/outcome", "w")
+            f.write(outcome)
+            f.close()
+          - $(inputs.params.operand1)
+          - $(inputs.params.operand2)
+          image: registry.access.redhat.com/ubi8/python-38
+    - name: condition-2
+      params:
+      - name: operand1
+        value: $(tasks.validate-model.results.Output)
+      - name: operand2
+        value: "False"
+      - name: operator
+        value: ==
+      taskSpec:
+        results:
+        - name: outcome
+          type: string
+          description: Conditional task outcome
+        params:
+        - name: operand1
+        - name: operand2
+        - name: operator
+        steps:
+        - name: main
+          command:
+          - sh
+          - -ec
+          - program_path=$(mktemp); printf "%s" "$0" > "$program_path";  python3 -u
+            "$program_path" "$1" "$2"
+          args:
+          - |
+            import sys
+            input1=str.rstrip(sys.argv[1])
+            input2=str.rstrip(sys.argv[2])
+            try:
+              input1=int(input1)
+              input2=int(input2)
+            except:
+              input1=str(input1)
+            outcome="true" if (input1 $(inputs.params.operator) input2) else "false"
+            f = open("/tekton/results/outcome", "w")
+            f.write(outcome)
+            f.close()
+          - $(inputs.params.operand1)
+          - $(inputs.params.operand2)
+          image: registry.access.redhat.com/ubi8/python-38
     workspaces:
     - name: test-matteo-storesomething
   workspaces:
