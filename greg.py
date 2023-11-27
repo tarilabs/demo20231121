@@ -2,6 +2,7 @@
 import kfp
 from kfp_tekton.compiler import TektonCompiler
 from kfp_tekton.compiler.pipeline_utils import TektonPipelineConf
+import re
 
 """Producer"""
 def send_file(
@@ -68,3 +69,15 @@ if __name__ == "__main__":
         package_path=__file__.replace(".py", ".yaml"),
         tekton_pipeline_conf=conf
     )
+    # the above does not work.
+    outYaml = __file__.replace(".py", ".yaml")
+    with open(outYaml, 'r') as file:
+        content = file.read()
+    pattern = re.compile(r'image: busybox')
+    modified_content = pattern.sub('image: registry.access.redhat.com/ubi8/python-38', content)
+    pattern = re.compile(r'storageClassName: kfp-csi-s3')
+    modified_content = pattern.sub('storageClassName: standard-csi', modified_content)
+    pattern = re.compile(r'apiVersion: tekton.dev/v1')
+    modified_content = pattern.sub('apiVersion: tekton.dev/v1beta1', modified_content)
+    with open(outYaml, 'w') as file:
+        file.write(modified_content)

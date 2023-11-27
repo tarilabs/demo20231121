@@ -1,4 +1,4 @@
-apiVersion: tekton.dev/v1
+apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: test-data-passing-pipeline-1
@@ -65,13 +65,13 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
-        - image: busybox
+        - image: registry.access.redhat.com/ubi8/python-38
           name: output-taskrun-name
           command:
           - sh
           - -ec
           - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
-        - image: busybox
+        - image: registry.access.redhat.com/ubi8/python-38
           name: copy-results-artifacts
           command:
           - sh
@@ -174,13 +174,13 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
-        - image: busybox
+        - image: registry.access.redhat.com/ubi8/python-38
           name: output-taskrun-name
           command:
           - sh
           - -ec
           - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
-        - image: busybox
+        - image: registry.access.redhat.com/ubi8/python-38
           name: copy-results-artifacts
           command:
           - sh
@@ -240,7 +240,7 @@ spec:
   - name: test-data-passing-pipeline-1
     volumeClaimTemplate:
       spec:
-        storageClassName: kfp-csi-s3
+        storageClassName: standard-csi
         accessModes:
         - ReadWriteMany
         resources:
