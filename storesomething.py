@@ -1,5 +1,7 @@
 import kfp
 from kfp_tekton.compiler import TektonCompiler
+from kubernetes.client.models import V1EnvVar
+import json
 
 def os_environ_print(my_input, input2, model_file: kfp.components.OutputPath("model_file"),):
     import os
@@ -18,16 +20,31 @@ def os_environ_print(my_input, input2, model_file: kfp.components.OutputPath("mo
             
     save_pickle(model_file, model)
 
+
+def logg_env_function():
+  import os
+  import logging
+  logging.basicConfig(level=logging.INFO)
+  logging.info(os.environ)
+
+
 create_step_os_environ_print = kfp.components.create_component_from_func(
     func=os_environ_print,
     base_image='ubi8/python-39',
     packages_to_install=[])
 
+
+logg_env_function_op = kfp.components.func_to_container_op(logg_env_function,
+                                                 base_image='ubi8/python-39')
+
+
 @kfp.dsl.pipeline(
     name="Test Matteo storesomething",
+    description='I need to store on S3, I need to know which location in the bucket, I need to know the name of the S3 bucket'
 )
 def my_pipeline(my_input):
-  import json
+  env_var = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': 'aws-connection-mybucket', 'key': 'AWS_SECRET_ACCESS_KEY'}})
+  task0 = logg_env_function_op().add_env_variable(env_var) 
   task1 = create_step_os_environ_print(
       my_input=my_input, 
       input2=kfp.dsl.RUN_ID_PLACEHOLDER

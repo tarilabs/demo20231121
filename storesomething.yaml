@@ -9,12 +9,14 @@ metadata:
     tekton.dev/artifact_bucket: mlpipeline
     tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
     tekton.dev/artifact_endpoint_scheme: http://
-    tekton.dev/artifact_items: '{"os-environ-print": [["model", "$(results.model.path)"]]}'
+    tekton.dev/artifact_items: '{"logg-env-function": [], "os-environ-print": [["model",
+      "$(results.model.path)"]]}'
     sidecar.istio.io/inject: "false"
     tekton.dev/template: ''
     pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
-    pipelines.kubeflow.org/pipeline_spec: '{"inputs": [{"name": "my_input"}], "name":
-      "Test Matteo storesomething"}'
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "I need to store on S3,
+      I need to know which location in the bucket, I need to know the name of the
+      S3 bucket", "inputs": [{"name": "my_input"}], "name": "Test Matteo storesomething"}'
   labels:
     pipelines.kubeflow.org/pipelinename: ''
     pipelines.kubeflow.org/generation: ''
@@ -26,6 +28,42 @@ spec:
     params:
     - name: my_input
     tasks:
+    - name: logg-env-function
+      taskSpec:
+        steps:
+        - name: main
+          command:
+          - sh
+          - -ec
+          - |
+            program_path=$(mktemp)
+            printf "%s" "$0" > "$program_path"
+            python3 -u "$program_path" "$@"
+          - |
+            def logg_env_function():
+              import os
+              import logging
+              logging.basicConfig(level=logging.INFO)
+              logging.info(os.environ)
+
+            import argparse
+            _parser = argparse.ArgumentParser(prog='Logg env function', description='')
+            _parsed_args = vars(_parser.parse_args())
+
+            _outputs = logg_env_function(**_parsed_args)
+          env:
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_SECRET_ACCESS_KEY
+          image: ubi8/python-39
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations:
+            pipelines.kubeflow.org/component_spec_digest: '{"name": "Logg env function",
+              "outputs": [], "version": "Logg env function@sha256=2eb1f7435ad1758ad399c289eae48abebbb73f2a637837078149f5f0a9aba483"}'
     - name: os-environ-print
       params:
       - name: my_input
