@@ -363,6 +363,17 @@ spec:
                 for obj in my_bucket.objects.filter():
                     print(obj.key)
 
+                mr = ModelRegistry('modelregistry-sample', 9090)
+                try:
+                    rm_id = mr.get_registered_model_by_params(name=registeredmodel_name).id
+                except Exception as e:
+                    rm_id = mr.upsert_registered_model(RegisteredModel(registeredmodel_name))
+                print("RegisteredModel ID:", rm_id)
+                mv_id = mr.upsert_model_version(ModelVersion(ModelArtifact('',''), version_name, "Data Scientist"), rm_id)
+                print("ModelVersion ID:", mv_id)
+                ma_id = mr.upsert_model_artifact(ModelArtifact('mnist', full_bucket_target), mv_id)
+                print("ModelArtifact ID:", ma_id)
+
                 print('end.')
 
             import argparse
@@ -455,7 +466,7 @@ spec:
             artifact_outputs: '["saveartifact"]'
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Index on ModelRegistry",
               "outputs": [{"name": "saveartifact", "type": "saveartifact"}], "version":
-              "Index on ModelRegistry@sha256=b44b9e688c3ef43432ee81e2edd49947edfbe274541a1fa6dd62c56e2f7f293d"}'
+              "Index on ModelRegistry@sha256=bd6158dd26d7e763b2a9df2b3149ec8747f3b99ff1bdaf5770b9ff325f2d8111"}'
         workspaces:
         - name: index-on-modelregistry
       when:

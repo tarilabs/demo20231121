@@ -93,6 +93,17 @@ def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), 
     for obj in my_bucket.objects.filter():
         print(obj.key)
 
+    mr = ModelRegistry('modelregistry-sample', 9090)
+    try:
+        rm_id = mr.get_registered_model_by_params(name=registeredmodel_name).id
+    except Exception as e:
+        rm_id = mr.upsert_registered_model(RegisteredModel(registeredmodel_name))
+    print("RegisteredModel ID:", rm_id)
+    mv_id = mr.upsert_model_version(ModelVersion(ModelArtifact('',''), version_name, "Data Scientist"), rm_id)
+    print("ModelVersion ID:", mv_id)
+    ma_id = mr.upsert_model_artifact(ModelArtifact('mnist', full_bucket_target), mv_id)
+    print("ModelArtifact ID:", ma_id)
+
     print('end.')
 
 
