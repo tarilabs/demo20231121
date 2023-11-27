@@ -61,12 +61,6 @@ spec:
             _parsed_args = vars(_parser.parse_args())
 
             _outputs = logg_env_function(**_parsed_args)
-          env:
-          - name: AWS_SECRET_ACCESS_KEY
-            valueFrom:
-              secretKeyRef:
-                name: aws-connection-mybucket
-                key: AWS_SECRET_ACCESS_KEY
           image: registry.access.redhat.com/ubi8/python-39
         metadata:
           labels:
@@ -137,19 +131,19 @@ spec:
                             loss='sparse_categorical_crossentropy',
                             metrics=['accuracy'])
                 print(model.summary())
-                history = model.fit(X_train,y_train,epochs=2) # TODO increase to 3
+                history = model.fit(X_train,y_train,epochs=3)
                 import tf2onnx
                 import onnx
                 input_signature = [tf.TensorSpec([1, 28, 28], tf.double, name='x')]
                 onnx_model, _ = tf2onnx.convert.from_keras(model, input_signature, opset=12)
-                onnx.save(onnx_model, "model2.onnx")
+                onnx.save(onnx_model, "model.onnx")
 
-                def save_pickle(object_file, model):
+                def save_pickle(model, object_file):
                     with open(object_file, "wb") as f:
                         pickle.dump(model, f)
 
-                save_pickle(outgoingfile, model)
-                shutil.copyfile('model2.onnx', outgoingfile2)
+                save_pickle(model, outgoingfile)
+                shutil.copyfile('model.onnx', outgoingfile2)
 
             import argparse
             _parser = argparse.ArgumentParser(prog='Train model', description='')
@@ -223,7 +217,7 @@ spec:
             artifact_outputs: '["model_file", "onnx_file"]'
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Train model",
               "outputs": [{"name": "outgoingfile", "type": "model_file"}, {"name":
-              "outgoingfile2", "type": "onnx_file"}], "version": "Train model@sha256=eccf3efbb6ea383ebad47586b3e84062758b0e8363ac803545e5ae560062df15"}'
+              "outgoingfile2", "type": "onnx_file"}], "version": "Train model@sha256=03d6a4ad3d1b99fd960b9c354a5f95b06dd7ccf99c15ffce1107e8bd0f38dff9"}'
         workspaces:
         - name: train-model
       workspaces:
@@ -337,12 +331,38 @@ spec:
                 return file_path
 
             def index_on_ModelRegistry(incomingfile, saveartifact):
+                from model_registry import ModelRegistry
+                from model_registry.types import ModelArtifact, ModelVersion, RegisteredModel
+                from datetime import datetime
                 import onnx
+                import boto3
+                import os
                 print(f'incomingfile: {incomingfile}')
                 onnx_model = onnx.load(incomingfile)
                 onnx.checker.check_model(onnx_model)
+                registeredmodel_name = "mnist"
+                version_name = "v"+datetime.now().strftime("%Y%m%d%H%M%S")
+                print(f"Will be using: {registeredmodel_name}:{version_name} in the remainder of this task")
 
-                print(onnx_model)
+                s3 = boto3.resource(
+                    service_name='s3',
+                    region_name=os.environ['AWS_DEFAULT_REGION'],
+                    aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+                    aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+                    use_ssl=False,
+                    endpoint_url=os.environ['AWS_S3_ENDPOINT'],
+                    verify=False
+                )
+
+                bucket_name = os.environ['AWS_S3_BUCKET']
+                in_bucket_target = f'{version_name}/mnist.onnx'
+                full_bucket_target = f's3://{bucket_name}/{in_bucket_target}'
+
+                my_bucket = s3.Bucket(bucket_name)
+                my_bucket.upload_file(incomingfile, in_bucket_target)
+                for obj in my_bucket.objects.filter():
+                    print(obj.key)
+
                 print('end.')
 
             import argparse
@@ -352,12 +372,37 @@ spec:
             _parsed_args = vars(_parser.parse_args())
 
             _outputs = index_on_ModelRegistry(**_parsed_args)
-          image: quay.io/mmortari/rdsp:latest
           env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_DEFAULT_REGION
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_DEFAULT_REGION
+          - name: AWS_S3_BUCKET
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_S3_BUCKET
+          - name: AWS_S3_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_S3_ENDPOINT
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: aws-connection-mybucket
+                key: AWS_SECRET_ACCESS_KEY
           - name: ORIG_PR_NAME
             valueFrom:
               fieldRef:
                 fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+          image: quay.io/mmortari/rdsp:latest
         - image: registry.access.redhat.com/ubi8/python-38
           name: output-taskrun-name
           command:
@@ -410,7 +455,7 @@ spec:
             artifact_outputs: '["saveartifact"]'
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Index on ModelRegistry",
               "outputs": [{"name": "saveartifact", "type": "saveartifact"}], "version":
-              "Index on ModelRegistry@sha256=9b904391050b9d9e213b65d0a17d9e5cadcd99b5e0f73aadb5cb52b6574fbb8c"}'
+              "Index on ModelRegistry@sha256=b44b9e688c3ef43432ee81e2edd49947edfbe274541a1fa6dd62c56e2f7f293d"}'
         workspaces:
         - name: index-on-modelregistry
       when:

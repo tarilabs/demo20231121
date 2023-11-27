@@ -61,10 +61,37 @@ def when_not_validated():
 
 
 def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), saveartifact: kfp.components.OutputPath("saveartifact")):
+    from model_registry import ModelRegistry
+    from model_registry.types import ModelArtifact, ModelVersion, RegisteredModel
+    from datetime import datetime
     import onnx
+    import boto3
+    import os
     print(f'incomingfile: {incomingfile}')
     onnx_model = onnx.load(incomingfile)
     onnx.checker.check_model(onnx_model)
+    registeredmodel_name = "mnist"
+    version_name = "v"+datetime.now().strftime("%Y%m%d%H%M%S")
+    print(f"Will be using: {registeredmodel_name}:{version_name} in the remainder of this task")
+
+    s3 = boto3.resource(
+        service_name='s3',
+        region_name=os.environ['AWS_DEFAULT_REGION'],
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        use_ssl=False,
+        endpoint_url=os.environ['AWS_S3_ENDPOINT'],
+        verify=False
+    )
+
+    bucket_name = os.environ['AWS_S3_BUCKET']
+    in_bucket_target = f'{version_name}/mnist.onnx'
+    full_bucket_target = f's3://{bucket_name}/{in_bucket_target}'
+
+    my_bucket = s3.Bucket(bucket_name)
+    my_bucket.upload_file(incomingfile, in_bucket_target)
+    for obj in my_bucket.objects.filter():
+        print(obj.key)
 
     print('end.')
 
@@ -80,21 +107,18 @@ create_step1 = kfp.components.create_component_from_func(
     func=train_model,
     base_image='image-registry.openshift-image-registry.svc:5000/odh/jupyter-tensorflow-notebook:2023.1',
     packages_to_install=[])
-
 create_step2 = kfp.components.create_component_from_func(
     func=validate_model,
     base_image='image-registry.openshift-image-registry.svc:5000/odh/jupyter-tensorflow-notebook:2023.1')
-
 create_step3 = kfp.components.create_component_from_func(
     func=index_on_ModelRegistry,
     base_image='quay.io/mmortari/rdsp:latest')
-
 create_step_when_not_validated = kfp.components.create_component_from_func(
     func=when_not_validated,
     base_image='registry.access.redhat.com/ubi8/python-39')
-
-logg_env_function_op = kfp.components.func_to_container_op(logg_env_function,
-                                                 base_image='registry.access.redhat.com/ubi8/python-39')
+logg_env_function_op = kfp.components.func_to_container_op(
+    func=logg_env_function,
+    base_image='registry.access.redhat.com/ubi8/python-39')
 
 
 @kfp.dsl.pipeline(
@@ -103,8 +127,13 @@ logg_env_function_op = kfp.components.func_to_container_op(logg_env_function,
 )
 def my_pipeline(my_input):
   bucket = 'mybucket'
-  env_var = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_SECRET_ACCESS_KEY'}})
-  task0 = logg_env_function_op().add_env_variable(env_var) 
+  env_AWS_ACCESS_KEY_ID = V1EnvVar(name='AWS_ACCESS_KEY_ID', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_ACCESS_KEY_ID'}})
+  env_AWS_DEFAULT_REGION = V1EnvVar(name='AWS_DEFAULT_REGION', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_DEFAULT_REGION'}})
+  env_AWS_S3_BUCKET = V1EnvVar(name='AWS_S3_BUCKET', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_S3_BUCKET'}})
+  env_AWS_S3_ENDPOINT = V1EnvVar(name='AWS_S3_ENDPOINT', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_S3_ENDPOINT'}})
+  env_AWS_SECRET_ACCESS_KEY = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_SECRET_ACCESS_KEY'}})
+
+  task0 = logg_env_function_op()
   task1 = create_step1(
       my_input=my_input, 
       input2=kfp.dsl.RUN_ID_PLACEHOLDER
@@ -112,7 +141,7 @@ def my_pipeline(my_input):
   task2 = create_step2(incomingfile=task1.outputs['outgoingfile'])
 
   with kfp.dsl.Condition(task2.output == True):
-      create_step3(incomingfile=task1.outputs['outgoingfile2']).add_pod_annotation(name='artifact_outputs', value=json.dumps(['saveartifact']))
+      create_step3(incomingfile=task1.outputs['outgoingfile2']).add_pod_annotation(name='artifact_outputs', value=json.dumps(['saveartifact'])).add_env_variable(env_AWS_ACCESS_KEY_ID).add_env_variable(env_AWS_DEFAULT_REGION).add_env_variable(env_AWS_S3_BUCKET).add_env_variable(env_AWS_S3_ENDPOINT).add_env_variable(env_AWS_SECRET_ACCESS_KEY)
 
   with kfp.dsl.Condition(task2.output == False):
       create_step_when_not_validated()
