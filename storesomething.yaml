@@ -104,6 +104,13 @@ spec:
                 print(model)
                 print(model_file)
 
+                from tensorflow import keras
+                (X_train,y_train),(X_test,y_test) = keras.datasets.mnist.load_data()
+
+                X_train = X_train/255
+                X_test = X_test/255
+                print('y_train[7] is the label:', y_train[7])
+
                 def save_pickle(object_file, target_object):
                     with open(object_file, "w") as f:
                         json.dump(target_object, f)
@@ -118,7 +125,7 @@ spec:
             _parsed_args = vars(_parser.parse_args())
 
             _outputs = os_environ_print(**_parsed_args)
-          image: ubi8/python-39
+          image: quay.io/mmortari/rdsp:latest
         params:
         - name: my_input
         - name: pipelineRun-uid
@@ -133,4 +140,4 @@ spec:
             artifact_outputs: '["model_file"]'
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Os environ print",
               "outputs": [{"name": "model", "type": "model_file"}], "version": "Os
-              environ print@sha256=51bd3c929aedb25da46d35b2ca44d6e98036bc85bca43a38292b8de348fa7859"}'
+              environ print@sha256=f658ea77394a6d275d3f69a2eb478c9d6415d80ef01f22c1e98d191e67d52259"}'

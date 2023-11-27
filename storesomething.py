@@ -14,6 +14,13 @@ def os_environ_print(my_input, input2, model_file: kfp.components.OutputPath("mo
     print(model)
     print(model_file)
 
+    from tensorflow import keras
+    (X_train,y_train),(X_test,y_test) = keras.datasets.mnist.load_data()
+
+    X_train = X_train/255
+    X_test = X_test/255
+    print('y_train[7] is the label:', y_train[7])
+
     def save_pickle(object_file, target_object):
         with open(object_file, "w") as f:
             json.dump(target_object, f)
@@ -30,7 +37,7 @@ def logg_env_function():
 
 create_step_os_environ_print = kfp.components.create_component_from_func(
     func=os_environ_print,
-    base_image='ubi8/python-39',
+    base_image='quay.io/mmortari/rdsp:latest',
     packages_to_install=[])
 
 
@@ -43,7 +50,8 @@ logg_env_function_op = kfp.components.func_to_container_op(logg_env_function,
     description='I need to store on S3, I need to know which location in the bucket, I need to know the name of the S3 bucket'
 )
 def my_pipeline(my_input):
-  env_var = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': 'aws-connection-mybucket', 'key': 'AWS_SECRET_ACCESS_KEY'}})
+  bucket = 'mybucket'
+  env_var = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_SECRET_ACCESS_KEY'}})
   task0 = logg_env_function_op().add_env_variable(env_var) 
   task1 = create_step_os_environ_print(
       my_input=my_input, 
