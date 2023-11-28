@@ -85,7 +85,9 @@ def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), 
     )
 
     bucket_name = os.environ['AWS_S3_BUCKET']
-    in_bucket_target = f'{version_name}/mnist.onnx'
+    odh_secret_name = f'aws-connection-{bucket_name}'
+    in_bucket_path = version_name
+    in_bucket_target = f'{in_bucket_path}/mnist.onnx'
     full_bucket_target = f's3://{bucket_name}/{in_bucket_target}'
 
     my_bucket = s3.Bucket(bucket_name)
@@ -101,7 +103,12 @@ def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), 
     print("RegisteredModel ID:", rm_id)
     mv_id = mr.upsert_model_version(ModelVersion(ModelArtifact('',''), version_name, "Data Scientist"), rm_id)
     print("ModelVersion ID:", mv_id)
-    ma_id = mr.upsert_model_artifact(ModelArtifact('mnist', full_bucket_target), mv_id)
+    ma_id = mr.upsert_model_artifact(ModelArtifact(
+        name='mnist',
+        uri=full_bucket_target,
+        storage_key=odh_secret_name,
+        storage_path=in_bucket_path)
+        , mv_id)
     print("ModelArtifact ID:", ma_id)
 
     print('end.')
@@ -137,12 +144,12 @@ logg_env_function_op = kfp.components.func_to_container_op(
     description='I need to store on S3, I need to know which location in the bucket, I need to know the name of the S3 bucket'
 )
 def my_pipeline(my_input):
-  bucket = 'mybucket'
-  env_AWS_ACCESS_KEY_ID = V1EnvVar(name='AWS_ACCESS_KEY_ID', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_ACCESS_KEY_ID'}})
-  env_AWS_DEFAULT_REGION = V1EnvVar(name='AWS_DEFAULT_REGION', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_DEFAULT_REGION'}})
-  env_AWS_S3_BUCKET = V1EnvVar(name='AWS_S3_BUCKET', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_S3_BUCKET'}})
-  env_AWS_S3_ENDPOINT = V1EnvVar(name='AWS_S3_ENDPOINT', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_S3_ENDPOINT'}})
-  env_AWS_SECRET_ACCESS_KEY = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': f'aws-connection-{bucket}', 'key': 'AWS_SECRET_ACCESS_KEY'}})
+  odh_dc_name = 'mybucket'
+  env_AWS_ACCESS_KEY_ID = V1EnvVar(name='AWS_ACCESS_KEY_ID', value_from={'secretKeyRef': {'name': f'aws-connection-{odh_dc_name}', 'key': 'AWS_ACCESS_KEY_ID'}})
+  env_AWS_DEFAULT_REGION = V1EnvVar(name='AWS_DEFAULT_REGION', value_from={'secretKeyRef': {'name': f'aws-connection-{odh_dc_name}', 'key': 'AWS_DEFAULT_REGION'}})
+  env_AWS_S3_BUCKET = V1EnvVar(name='AWS_S3_BUCKET', value_from={'secretKeyRef': {'name': f'aws-connection-{odh_dc_name}', 'key': 'AWS_S3_BUCKET'}})
+  env_AWS_S3_ENDPOINT = V1EnvVar(name='AWS_S3_ENDPOINT', value_from={'secretKeyRef': {'name': f'aws-connection-{odh_dc_name}', 'key': 'AWS_S3_ENDPOINT'}})
+  env_AWS_SECRET_ACCESS_KEY = V1EnvVar(name='AWS_SECRET_ACCESS_KEY', value_from={'secretKeyRef': {'name': f'aws-connection-{odh_dc_name}', 'key': 'AWS_SECRET_ACCESS_KEY'}})
 
   task0 = logg_env_function_op()
   task1 = create_step1(
