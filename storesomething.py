@@ -107,7 +107,9 @@ def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), 
         name='mnist',
         uri=full_bucket_target,
         storage_key=odh_secret_name,
-        storage_path=in_bucket_path)
+        storage_path=in_bucket_path,
+        model_format_name="onnx",
+        model_format_version="1")
         , mv_id)
     print("ModelArtifact ID:", ma_id)
 
