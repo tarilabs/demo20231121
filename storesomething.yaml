@@ -332,7 +332,6 @@ spec:
 
             def index_on_ModelRegistry(incomingfile, saveartifact):
                 from model_registry import ModelRegistry
-                from model_registry.types import ModelArtifact, ModelVersion, RegisteredModel
                 from datetime import datetime
                 import onnx
                 import boto3
@@ -365,21 +364,23 @@ spec:
                 for obj in my_bucket.objects.filter():
                     print(obj.key)
 
-                mr = ModelRegistry('modelregistry-sample', 9090)
-                try:
-                    rm_id = mr.get_registered_model_by_params(name=registeredmodel_name).id
-                except Exception as e:
-                    rm_id = mr.upsert_registered_model(RegisteredModel(registeredmodel_name))
-                print("RegisteredModel ID:", rm_id)
-                mv_id = mr.upsert_model_version(ModelVersion(ModelArtifact('',''), version_name, "Data Scientist"), rm_id)
-                print("ModelVersion ID:", mv_id)
-                ma_id = mr.upsert_model_artifact(ModelArtifact(
-                    name='mnist',
-                    uri=full_bucket_target,
-                    storage_key=odh_secret_name,
-                    storage_path=in_bucket_path)
-                    , mv_id)
-                print("ModelArtifact ID:", ma_id)
+                registry = ModelRegistry(server_address="modelregistry-sample", port=9090, author="author")
+
+                rm = registry.register_model(registeredmodel_name,
+                                                full_bucket_target,
+                                                model_format_name="onnx",
+                                                model_format_version="1",
+                                                storage_key=odh_secret_name,
+                                                storage_path=in_bucket_path,
+                                                version=version_name,
+                                                description="demo20231121 e2e MNIST",
+                                                )
+                print("RegisteredModel:")
+                print(registry.get_registered_model(registeredmodel_name))
+                print("ModelVersion:")
+                print(registry.get_model_version(registeredmodel_name, version_name))
+                print("ModelArtifact:")
+                print(registry.get_model_artifact(registeredmodel_name, version_name))
 
                 print('end.')
 
@@ -473,7 +474,7 @@ spec:
             artifact_outputs: '["saveartifact"]'
             pipelines.kubeflow.org/component_spec_digest: '{"name": "Index on ModelRegistry",
               "outputs": [{"name": "saveartifact", "type": "saveartifact"}], "version":
-              "Index on ModelRegistry@sha256=d6f6493284d9fb0c4a6b24e1aa1aac79084fa41b0ecf4f486db327a4f62f812e"}'
+              "Index on ModelRegistry@sha256=0ef0abd0ee9d128916be98197111baeba3441d25cf6db877f52481c623e2a8b9"}'
         workspaces:
         - name: index-on-modelregistry
       when:

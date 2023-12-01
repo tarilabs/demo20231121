@@ -62,7 +62,6 @@ def when_not_validated():
 
 def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), saveartifact: kfp.components.OutputPath("saveartifact")):
     from model_registry import ModelRegistry
-    from model_registry.types import ModelArtifact, ModelVersion, RegisteredModel
     from datetime import datetime
     import onnx
     import boto3
@@ -95,23 +94,23 @@ def index_on_ModelRegistry(incomingfile: kfp.components.InputPath("onnx_file"), 
     for obj in my_bucket.objects.filter():
         print(obj.key)
 
-    mr = ModelRegistry('modelregistry-sample', 9090)
-    try:
-        rm_id = mr.get_registered_model_by_params(name=registeredmodel_name).id
-    except Exception as e:
-        rm_id = mr.upsert_registered_model(RegisteredModel(registeredmodel_name))
-    print("RegisteredModel ID:", rm_id)
-    mv_id = mr.upsert_model_version(ModelVersion(ModelArtifact('',''), version_name, "Data Scientist"), rm_id)
-    print("ModelVersion ID:", mv_id)
-    ma_id = mr.upsert_model_artifact(ModelArtifact(
-        name='mnist',
-        uri=full_bucket_target,
-        storage_key=odh_secret_name,
-        storage_path=in_bucket_path,
-        model_format_name="onnx",
-        model_format_version="1")
-        , mv_id)
-    print("ModelArtifact ID:", ma_id)
+    registry = ModelRegistry(server_address="modelregistry-sample", port=9090, author="author")
+
+    rm = registry.register_model(registeredmodel_name,
+                                    full_bucket_target,
+                                    model_format_name="onnx",
+                                    model_format_version="1",
+                                    storage_key=odh_secret_name,
+                                    storage_path=in_bucket_path,
+                                    version=version_name,
+                                    description="demo20231121 e2e MNIST",
+                                    )
+    print("RegisteredModel:")
+    print(registry.get_registered_model(registeredmodel_name))
+    print("ModelVersion:")
+    print(registry.get_model_version(registeredmodel_name, version_name))
+    print("ModelArtifact:")
+    print(registry.get_model_artifact(registeredmodel_name, version_name))
 
     print('end.')
 
