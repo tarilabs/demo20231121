@@ -273,3 +273,15 @@ curl --silent -X 'GET' \
   "$MR_HOSTNAME/api/model_registry/v1alpha1/inference_services/5/serves?pageSize=100&orderBy=ID&sortOrder=DESC&nextPageToken=" \
   -H 'accept: application/json' | jq
 
+# See also
+
+https://github.com/tarilabs/demo20231121-web
+
+# References
+
+- https://developers.redhat.com/learning/learn:openshift-data-science:how-create-tensorflow-model/resource/resources:build-train-and-run-your-tensorflow-model
+- https://adeshpande3.github.io/A-Beginner's-Guide-To-Understanding-Convolutional-Neural-Networks/
+- https://ujjwalkarn.me/2016/08/11/intuitive-explanation-convnets/
+- https://www.youtube.com/watch?v=bNb2fEVKeEo&list=PL3FW7Lu3i5JvHM8ljYj-zLfQRF3EO8sYv&index=5
+  - https://cs231n.github.io/convolutional-networks/#overview
+- https://ai.stackexchange.com/questions/5546/what-is-the-difference-between-a-convolutional-neural-network-and-a-regular-neur
